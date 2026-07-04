@@ -2,10 +2,10 @@
   "id": "card_replace",
   "name": "Card Replace",
   "author": "nihe",
-  "description": "Replace card art from folder-based image packs.",
+  "description": "Loads a generated high-performance card art PCK built from .cardartpack.json files.",
   "version": "0.1.0",
   "min_game_version": "0.107.1",
-  "has_pck": false,
+  "has_pck": true,
   "has_dll": true,
   "dependencies": [
     {

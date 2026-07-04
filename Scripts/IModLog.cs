@@ -1,4 +1,4 @@
-namespace CardReplace.Scripts.ArtPacks;
+namespace CardReplace.Scripts;
 
 public interface IModLog
 {

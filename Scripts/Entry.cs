@@ -1,5 +1,5 @@
 using System.Reflection;
-using CardReplace.Scripts.ArtPacks;
+using Godot;
 using Godot.Bridge;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Logging;
@@ -11,34 +11,83 @@ namespace CardReplace.Scripts;
 public static class Entry
 {
     public const string ModId = "card_replace";
+    private const string GeneratedPckFileName = "card_replace.pck";
+    private const string LegacyGeneratedPckFileName = "card_replace_generated.pck";
 
     public static void Init()
     {
-        var harmony = new Harmony("sts2.reme.card_replace");
-        harmony.PatchAll();
         ScriptManagerBridge.LookupScriptsInAssembly(typeof(Entry).Assembly);
 
-        var modRoot = ModPaths.GetModRoot(Assembly.GetExecutingAssembly());
+        var modRoot = GetModRoot(Assembly.GetExecutingAssembly());
         var log = new DelegateModLog(
             message => Log.Info(message),
             message => Log.Warn(message),
             message => Log.Error(message));
 
-        var config = ArtPackConfigStore.LoadOrCreate(modRoot, log);
-        var registry = ArtPackRegistry.Load(modRoot, config, log);
-        ArtPackConfigStore.Save(modRoot, config, log);
+        var pckPath = ResolveGeneratedPckPath(modRoot);
+        var loaded = LoadGeneratedPack(pckPath, log);
+        CardReplacementRegistry.EnsureLoaded(log);
+        ApplyHarmonyPatches(log);
 
-        var effectiveOverrides = registry.ResolveEffectiveOverrides();
-        ArtReplacementService.Initialize(effectiveOverrides, log);
-        RitsuSettingsBridge.Register(modRoot, config, registry, log);
+        RitsuSettingsBridge.Register(modRoot, pckPath, loaded, log);
 
-        Log.Info($"{ModId}: initialized from {modRoot}");
-        Log.Info($"{ModId}: loaded {registry.Packs.Count} pack(s), {effectiveOverrides.Count} effective override(s).");
-        foreach (var resolved in effectiveOverrides)
+        log.Info($"{ModId}: initialized from {modRoot}; replacementEntries={CardReplacementRegistry.Count}");
+    }
+
+    private static string ResolveGeneratedPckPath(string modRoot)
+    {
+        var officialPath = Path.Combine(modRoot, GeneratedPckFileName);
+        if (File.Exists(officialPath))
         {
-            Log.Info(
-                $"{ModId}: {resolved.Override.SourcePath} -> {resolved.AssetPath} " +
-                $"[{resolved.Override.Type}, pack={resolved.PackId}, priority={resolved.Priority}]");
+            return officialPath;
         }
+
+        return Path.Combine(modRoot, LegacyGeneratedPckFileName);
+    }
+
+    private static bool LoadGeneratedPack(string pckPath, IModLog log)
+    {
+        if (!File.Exists(pckPath))
+        {
+            log.Warn($"{ModId}: generated pck was not found: {pckPath}");
+            return false;
+        }
+
+        if (!ProjectSettings.LoadResourcePack(pckPath, replaceFiles: true))
+        {
+            log.Error($"{ModId}: failed to load generated pck: {pckPath}");
+            return false;
+        }
+
+        log.Info($"{ModId}: loaded generated pck: {pckPath}");
+        return true;
+    }
+
+    private static void ApplyHarmonyPatches(IModLog log)
+    {
+        try
+        {
+            new Harmony(ModId).PatchAll(typeof(Entry).Assembly);
+            log.Info($"{ModId}: Harmony patches applied");
+        }
+        catch (Exception ex)
+        {
+            log.Error($"{ModId}: failed to apply Harmony patches: {ex}");
+        }
+    }
+
+    private static string GetModRoot(Assembly assembly)
+    {
+        var assemblyLocation = assembly.Location;
+        if (!string.IsNullOrWhiteSpace(assemblyLocation))
+        {
+            var directory = Path.GetDirectoryName(assemblyLocation);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                return directory;
+            }
+        }
+
+        return AppContext.BaseDirectory;
     }
 }

@@ -1,0 +1,23 @@
+{
+  "godot_exe": "D:\\workspace\\slaythespire2\\mods\\Godot_v4.5.1-stable_mono_win64\\Godot_v4.5.1-stable_mono_win64_console.exe",
+  "output_root": "build\\generated",
+  "output_mod_dir": "dist\\card_replace",
+  "loader_dll_path": ".godot\\mono\\temp\\bin\\Debug\\card_replace.dll",
+  "mod_manifest_path": "card_replace.json",
+  "staging_root": "build\\staging_godot_project",
+  "pck_name": "card_replace.pck",
+  "packs": [
+    {
+      "id": "3abironclad_61_NSFW",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\3abironclad_61_NSFW.cardartpack.json",
+      "enabled": true,
+      "priority": 100
+    },
+    {
+      "id": "RejentSFWartpack_89_20260521230748",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\RejentSFWartpack_89_20260521230748.cardartpack.json",
+      "enabled": false,
+      "priority": 200
+    }
+  ]
+}

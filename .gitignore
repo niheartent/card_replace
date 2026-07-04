@@ -2,3 +2,8 @@
 .godot/
 /android/
 .nuget/
+build/
+build_config.json
+bin/
+obj/
+dist/
