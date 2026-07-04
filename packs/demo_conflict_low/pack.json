@@ -1,0 +1,13 @@
+{
+  "id": "demo_conflict_low",
+  "name": "Demo Conflict Low Priority",
+  "enabledDefault": true,
+  "priorityDefault": 50,
+  "overrides": [
+    {
+      "source_path": "res://images/packed/card_portraits/regent/strike_regent.png",
+      "type": "static",
+      "file": "images/strike_regent_alt.png"
+    }
+  ]
+}

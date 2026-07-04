@@ -1,0 +1,13 @@
+{
+  "id": "demo_gif",
+  "name": "Demo GIF Pack",
+  "enabledDefault": true,
+  "priorityDefault": 200,
+  "overrides": [
+    {
+      "source_path": "res://images/packed/card_portraits/ironclad/rage.png",
+      "type": "gif",
+      "file": "gifs/rage.gif"
+    }
+  ]
+}
