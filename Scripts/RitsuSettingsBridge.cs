@@ -98,11 +98,9 @@ public static class RitsuSettingsBridge
         foreach (var pack in summary.Packs.OrderByDescending(pack => pack.Priority).ThenBy(pack => pack.Sequence ?? int.MaxValue))
         {
             var currentRank = rank;
-            var sequenceEn = pack.Sequence is null ? "unknown" : pack.Sequence.Value.ToString();
-            var sequenceZh = pack.Sequence is null ? "未知" : pack.Sequence.Value.ToString();
             section.AddParagraph(
                 $"pack_{currentRank}",
-                Text($"#{currentRank} sequence {sequenceEn}: {pack.Id}", $"#{currentRank} 序号 {sequenceZh}: {pack.Id}"),
+                Text($"#{currentRank}: {pack.Id}"),
                 Text(
                     $"priority: {pack.Priority}; final wins: {pack.ReplacementCount}; source: {pack.Path}",
                     $"priority: {pack.Priority}; 最终胜出: {pack.ReplacementCount}; 来源: {pack.Path}"),
