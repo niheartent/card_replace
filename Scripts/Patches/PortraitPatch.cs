@@ -2,6 +2,7 @@ using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Logging;
 
 namespace CardReplace.Scripts.Patches;
 
@@ -18,6 +19,8 @@ internal static class PortraitPatch
 
     private static readonly Dictionary<string, PortraitState> DefaultPortraitStates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, PortraitState> DefaultAncientPortraitStates = new(StringComparer.OrdinalIgnoreCase);
+    private static int _appliedLogCount;
+    private static bool _missingFieldLogged;
 
     [HarmonyPostfix]
     [HarmonyPatch(typeof(NCard), "UpdateVisuals")]
@@ -44,6 +47,11 @@ internal static class PortraitPatch
         var cardId = model.GetType().FullName ?? model.GetType().Name;
         var portrait = PortraitField?.GetValue(card) as TextureRect;
         var ancientPortrait = AncientPortraitField?.GetValue(card) as TextureRect;
+        if (!_missingFieldLogged && portrait is null && ancientPortrait is null)
+        {
+            _missingFieldLogged = true;
+            Log.Warn($"{Entry.ModId}: NCard portrait fields were not available; replacement cannot be displayed.");
+        }
 
         RememberDefaultState(cardId, portrait, DefaultPortraitStates);
         RememberDefaultState(cardId, ancientPortrait, DefaultAncientPortraitStates);
@@ -59,6 +67,7 @@ internal static class PortraitPatch
 
         ApplyTexture(portrait, texture);
         ApplyTexture(ancientPortrait, texture);
+        LogApplied(cardId, texture);
     }
 
     private static void ApplyTexture(TextureRect? rect, Texture2D texture)
@@ -111,5 +120,16 @@ internal static class PortraitPatch
         {
             rect.Texture = null;
         }
+    }
+
+    private static void LogApplied(string cardId, Texture2D texture)
+    {
+        if (_appliedLogCount >= 20)
+        {
+            return;
+        }
+
+        _appliedLogCount++;
+        Log.Info($"{Entry.ModId}: applied replacement #{_appliedLogCount}: {cardId} -> {texture.ResourcePath}");
     }
 }

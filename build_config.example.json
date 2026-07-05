@@ -8,17 +8,24 @@
   "pck_name": "card_replace.pck",
   "inputs": [
     {
-      "id": "3abironclad_61_NSFW",
-      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\3abironclad_61_NSFW.cardartpack.json",
+      "id": "pack_1",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\1-pack.cardartpack.json",
       "enabled": true,
-      "priority": 100,
+      "priority": 99999,
       "type": "cardartpack"
     },
     {
-      "id": "existing_pck_mod",
-      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\猎宝卡面",
-      "enabled": false,
-      "priority": 90,
+      "id": "pack_2_zip",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\2-existing-card-art-mod.zip",
+      "enabled": true,
+      "priority": 99998,
+      "type": "zip"
+    },
+    {
+      "id": "pack_3_folder",
+      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\some_existing_card_art_mod",
+      "enabled": true,
+      "priority": 99997,
       "type": "folder"
     }
   ]

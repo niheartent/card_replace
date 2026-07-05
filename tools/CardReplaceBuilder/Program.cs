@@ -296,7 +296,77 @@ public static class Program
                 new PckImportedAsset(pckPath, importEntry, ctexEntry, sourcePath));
         }
 
+        foreach (var mapEntry in pck.Entries.Where(entry => IsPckReplacementMapPath(entry.Path)))
+        {
+            foreach (var candidate in LoadPckReplacementMapCandidates(input, pckPath, pck, entriesByPath, mapEntry))
+            {
+                count++;
+                yield return candidate;
+            }
+        }
+
         Console.WriteLine($"Loaded {count} PCK card art candidate(s): {pckPath}");
+    }
+
+    private static IEnumerable<ReplacementCandidate> LoadPckReplacementMapCandidates(
+        InputContext input,
+        string pckPath,
+        GodotPck pck,
+        Dictionary<string, PckEntry> entriesByPath,
+        PckEntry mapEntry)
+    {
+        PckReplacementDocument? document;
+        try
+        {
+            document = JsonSerializer.Deserialize<PckReplacementDocument>(
+                Encoding.UTF8.GetString(pck.ReadEntry(mapEntry)),
+                JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine($"Skipped {mapEntry.Path}: invalid replacement map ({ex.Message})");
+            yield break;
+        }
+
+        if (document?.NormalReplacements is null)
+        {
+            yield break;
+        }
+
+        foreach (var replacement in document.NormalReplacements)
+        {
+            if (string.IsNullOrWhiteSpace(replacement.CardType)
+                || string.IsNullOrWhiteSpace(replacement.PortraitPath)
+                || !replacement.PortraitPath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var importPath = replacement.PortraitPath["res://".Length..] + ".import";
+            if (!entriesByPath.TryGetValue(importPath, out var importEntry))
+            {
+                Console.WriteLine($"Skipped {replacement.PortraitPath}: import file was not found in {pckPath}");
+                continue;
+            }
+
+            var importText = Encoding.UTF8.GetString(pck.ReadEntry(importEntry));
+            var ctexPath = ParseImportedTexturePath(importText);
+            if (string.IsNullOrWhiteSpace(ctexPath)
+                || !entriesByPath.TryGetValue(ctexPath["res://".Length..], out var ctexEntry))
+            {
+                Console.WriteLine($"Skipped {replacement.PortraitPath}: referenced ctex was not found in {pckPath}");
+                continue;
+            }
+
+            var cardId = $"MegaCrit.Sts2.Core.Models.Cards.{replacement.CardType}";
+            yield return new ReplacementCandidate(
+                ConflictKey(cardId, replacement.PortraitPath),
+                replacement.PortraitPath,
+                cardId,
+                input with { Path = pckPath },
+                "pck_replacement_map",
+                new PckImportedAsset(pckPath, importEntry, ctexEntry, replacement.PortraitPath));
+        }
     }
 
     private static Dictionary<string, ReplacementCandidate> ResolveWinners(
@@ -597,6 +667,12 @@ public static class Program
             && path.Contains("MegaCrit.Sts2.Core.Models.Cards.", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsPckReplacementMapPath(string path)
+    {
+        return path.EndsWith("/card_replacements.json", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(path, "card_replacements.json", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string ToGeneratedCardRelativePath(string sourcePath)
     {
         const string prefix = "res://images/packed/card_portraits/";
@@ -823,6 +899,13 @@ public enum InputKind
 }
 
 public sealed record CardArtPackOverrideData(string SourcePath, string Type, string? PngBase64, string? EditSourcePngBase64);
+
+public sealed record PckReplacementDocument(
+    [property: JsonPropertyName("normalReplacements")] List<PckNormalReplacement> NormalReplacements);
+
+public sealed record PckNormalReplacement(
+    [property: JsonPropertyName("cardType")] string CardType,
+    [property: JsonPropertyName("portraitPath")] string PortraitPath);
 
 public sealed record ReplacementCandidate(
     string ConflictKey,
