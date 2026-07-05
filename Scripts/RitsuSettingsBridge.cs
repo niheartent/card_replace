@@ -29,7 +29,7 @@ public static class RitsuSettingsBridge
         page
             .WithModDisplayName(Text("Card Replace"))
             .WithTitle(Text("Card Replace"))
-            .WithDescription(Text("Generated card art PCK status and build report."))
+            .WithDescription(Text("查看当前静态卡面包的加载状态、输入来源、最终替换数量和冲突处理结果。"))
             .AddSection("status", section => BuildStatusSection(section, pckPath, pckLoaded, summary))
             .AddSection("packs", section => BuildPacksSection(section, summary))
             .AddSection("coverage", section => BuildCoverageSection(section, summary))
@@ -43,39 +43,39 @@ public static class RitsuSettingsBridge
         BuildSummary summary)
     {
         section
-            .WithTitle(Text("Generated Texture Pack"))
-            .WithDescription(Text("This page is informational. Change pack priority in the builder, regenerate the PCK, then restart the game."));
+            .WithTitle(Text("生成结果"))
+            .WithDescription(Text("这里是只读信息页。修改输入包或优先级后，需要重新运行 Builder 并重启游戏。"));
 
         section.AddParagraph(
             "pck_status",
-            Text(pckLoaded ? "PCK loaded" : "PCK not loaded"),
+            Text(pckLoaded ? "PCK 已加载" : "PCK 未加载"),
             Text($"{pckPath} ({FormatFileSize(pckPath)})"),
             null);
 
         section.AddParagraph(
             "build_summary",
-            Text("Build summary"),
+            Text("构建摘要"),
             Text(
-                $"Generated: {summary.GeneratedAt}; packs: {summary.EnabledPackCount}; " +
-                $"replacements: {summary.ReplacementCount}; unique source paths: {summary.UniqueSourceCount}; conflicts: {summary.ConflictCount}"),
+                $"生成时间: {summary.GeneratedAt}; 输入: {summary.EnabledPackCount}; " +
+                $"最终替换: {summary.ReplacementCount}; 唯一卡面: {summary.UniqueSourceCount}; 冲突: {summary.ConflictCount}"),
             null);
 
         section.AddParagraph(
             "load_rule",
-            Text("Load rule"),
-            Text("Static generated assets. The PCK contains imported textures and a replacement map; the DLL applies those textures when card UI nodes refresh."),
+            Text("运行方式"),
+            Text("游戏启动时加载已经生成好的 PCK 和 replacement map；运行时不读取外部素材包，不重新计算优先级。"),
             null);
     }
 
     private static void BuildPacksSection(ModSettingsSectionBuilder section, BuildSummary summary)
     {
         section
-            .WithTitle(Text("Input Packs"))
-            .WithDescription(Text("Lower file sequence wins. For example, 1-*.cardartpack.json has higher priority than 2-*.cardartpack.json."));
+            .WithTitle(Text("输入来源"))
+            .WithDescription(Text("数字越大的 priority 越优先。若用文件名前缀排序，通常 1-* 会被配置成最高 priority。"));
 
         if (summary.Packs.Count == 0)
         {
-            section.AddParagraph("packs_empty", Text("No pack report"), Text("manifest.final.cardreplace was not found or could not be parsed."), null);
+            section.AddParagraph("packs_empty", Text("没有输入报告"), Text("未找到或无法解析 manifest.final.cardreplace。"), null);
             return;
         }
 
@@ -85,8 +85,8 @@ public static class RitsuSettingsBridge
             var sequence = pack.Sequence is null ? "unknown" : pack.Sequence.Value.ToString();
             section.AddParagraph(
                 $"pack_{rank}",
-                Text($"#{rank} sequence {sequence}: {pack.Id}"),
-                Text($"Priority value: {pack.Priority}; targets: {pack.ReplacementCount}; file: {pack.Path}"),
+                Text($"#{rank} 序号 {sequence}: {pack.Id}"),
+                Text($"priority: {pack.Priority}; 最终胜出: {pack.ReplacementCount}; 来源: {pack.Path}"),
                 null);
             rank++;
         }
@@ -95,21 +95,21 @@ public static class RitsuSettingsBridge
     private static void BuildCoverageSection(ModSettingsSectionBuilder section, BuildSummary summary)
     {
         section
-            .WithTitle(Text("Generated Targets"))
-            .WithDescription(Text("Each winning card art source is exported once under generated/card_replace/cards and mapped back to its original source path."));
+            .WithTitle(Text("最终替换"))
+            .WithDescription(Text("这里展示最终进入 replacement map 的卡面。列表只显示部分样例。"));
 
         section.AddParagraph(
             "coverage_counts",
-            Text("Replacement count"),
-            Text($"Generated images: {summary.ReplacementCount}; unique source paths: {summary.UniqueSourceCount}; runtime map entries: {summary.RuntimeMapCount}"),
+            Text("替换数量"),
+            Text($"最终替换: {summary.ReplacementCount}; 唯一卡面: {summary.UniqueSourceCount}; 运行时映射: {summary.RuntimeMapCount}"),
             null);
 
         foreach (var sample in summary.ReplacementSamples.Select((item, index) => (item, index)))
         {
             section.AddParagraph(
                 $"sample_{sample.index}",
-                Text(sample.item.SourcePath),
-                Text($"{sample.item.PackId} -> {sample.item.StagedPath}; card id: {sample.item.CardId}"),
+                Text(string.IsNullOrWhiteSpace(sample.item.CardId) ? sample.item.SourcePath : sample.item.CardId),
+                Text($"{sample.item.PackId} -> {sample.item.Image}; 原始路径: {sample.item.SourcePath}"),
                 null);
         }
     }
@@ -117,12 +117,12 @@ public static class RitsuSettingsBridge
     private static void BuildConflictsSection(ModSettingsSectionBuilder section, BuildSummary summary)
     {
         section
-            .WithTitle(Text("Conflict Resolution"))
-            .WithDescription(Text("When multiple packs replace the same source path, the highest priority pack wins."));
+            .WithTitle(Text("冲突处理"))
+            .WithDescription(Text("多个来源替换同一张卡时，priority 最高的来源胜出。列表只显示部分冲突样例。"));
 
         section.AddParagraph(
             "conflict_count",
-            Text("Conflict count"),
+            Text("冲突数量"),
             Text(summary.ConflictCount.ToString()),
             null);
 
@@ -130,8 +130,8 @@ public static class RitsuSettingsBridge
         {
             section.AddParagraph(
                 $"conflict_{conflict.index}",
-                Text(conflict.item.SourcePath),
-                Text($"Winner: {conflict.item.WinnerPackId} (priority {conflict.item.WinnerPriority}); overridden: {conflict.item.OverriddenPackIds}"),
+                Text(string.IsNullOrWhiteSpace(conflict.item.CardId) ? conflict.item.SourcePath : conflict.item.CardId),
+                Text($"胜出: {conflict.item.WinnerPackId} (priority {conflict.item.WinnerPriority}); 被覆盖: {conflict.item.OverriddenPackIds}"),
                 null);
         }
     }
@@ -189,7 +189,7 @@ public static class RitsuSettingsBridge
                     foreach (var replacement in replacements.EnumerateArray())
                     {
                         var sourcePath = GetString(replacement, "source_path");
-                        var stagedPath = GetString(replacement, "staged_path");
+                        var image = GetString(replacement, "image");
                         var cardId = GetString(replacement, "card_id");
                         var packId = GetString(replacement, "pack_id");
 
@@ -206,7 +206,7 @@ public static class RitsuSettingsBridge
 
                         if (summary.ReplacementSamples.Count < 12)
                         {
-                            summary.ReplacementSamples.Add(new ReplacementSample(sourcePath, stagedPath, cardId, packId));
+                            summary.ReplacementSamples.Add(new ReplacementSample(sourcePath, image, cardId, packId));
                         }
                     }
 
@@ -242,14 +242,15 @@ public static class RitsuSettingsBridge
                         }
 
                         var sourcePath = GetString(conflict, "source_path");
+                        var cardId = GetString(conflict, "card_id");
                         var winner = conflict.TryGetProperty("winner", out var winnerElement)
                             ? winnerElement
                             : default;
                         var winnerPackId = winner.ValueKind == JsonValueKind.Object
-                            ? GetString(winner, "PackId")
+                            ? FirstNonEmpty(GetString(winner, "pack_id"), GetString(winner, "PackId"))
                             : "";
                         var winnerPriority = winner.ValueKind == JsonValueKind.Object
-                            ? GetInt32(winner, "Priority")
+                            ? FirstNonZero(GetInt32(winner, "priority"), GetInt32(winner, "Priority"))
                             : 0;
                         var overriddenPackIds = new List<string>();
 
@@ -258,7 +259,7 @@ public static class RitsuSettingsBridge
                         {
                             foreach (var item in overridden.EnumerateArray())
                             {
-                                var overriddenPackId = GetString(item, "PackId");
+                                var overriddenPackId = FirstNonEmpty(GetString(item, "pack_id"), GetString(item, "PackId"));
                                 if (!string.IsNullOrWhiteSpace(overriddenPackId))
                                 {
                                     overriddenPackIds.Add(overriddenPackId);
@@ -268,6 +269,7 @@ public static class RitsuSettingsBridge
 
                         summary.ConflictSamples.Add(new ConflictSample(
                             sourcePath,
+                            cardId,
                             winnerPackId,
                             winnerPriority,
                             string.Join(", ", overriddenPackIds.Distinct(StringComparer.OrdinalIgnoreCase))));
@@ -324,6 +326,16 @@ public static class RitsuSettingsBridge
             : 0;
     }
 
+    private static string FirstNonEmpty(params string[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "";
+    }
+
+    private static int FirstNonZero(params int[] values)
+    {
+        return values.FirstOrDefault(value => value != 0);
+    }
+
     private static int? GetFileSequence(string path)
     {
         var fileName = Path.GetFileName(path);
@@ -362,7 +374,7 @@ public static class RitsuSettingsBridge
         public int ReplacementCount { get; set; }
     }
 
-    private sealed record ReplacementSample(string SourcePath, string StagedPath, string CardId, string PackId);
+    private sealed record ReplacementSample(string SourcePath, string Image, string CardId, string PackId);
 
-    private sealed record ConflictSample(string SourcePath, string WinnerPackId, int WinnerPriority, string OverriddenPackIds);
+    private sealed record ConflictSample(string SourcePath, string CardId, string WinnerPackId, int WinnerPriority, string OverriddenPackIds);
 }
