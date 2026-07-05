@@ -6,18 +6,20 @@
   "mod_manifest_path": "card_replace.json",
   "staging_root": "build\\staging_godot_project",
   "pck_name": "card_replace.pck",
-  "packs": [
+  "inputs": [
     {
       "id": "3abironclad_61_NSFW",
       "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\3abironclad_61_NSFW.cardartpack.json",
       "enabled": true,
-      "priority": 100
+      "priority": 100,
+      "type": "cardartpack"
     },
     {
-      "id": "RejentSFWartpack_89_20260521230748",
-      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\RejentSFWartpack_89_20260521230748.cardartpack.json",
+      "id": "existing_pck_mod",
+      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\猎宝卡面",
       "enabled": false,
-      "priority": 200
+      "priority": 90,
+      "type": "folder"
     }
   ]
 }

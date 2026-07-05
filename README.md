@@ -8,7 +8,7 @@ Card Replace 是一个面向《Slay the Spire 2》的卡面替换生成工具。
 
 这个项目现在的主体不是游戏内编辑器，而是游戏外生成工具。
 
-它读取 Card Art Editor 风格的 `.cardartpack.json`，在游戏启动前完成图片解码、优先级合并、冲突处理和 PCK 生成，最后输出一个可以放进 STS2 `mods` 目录的完整 mod：
+它读取 Card Art Editor 风格的 `.cardartpack.json`，也可以读取未加密的现有卡面替换 mod 文件夹、`.pck` 或 `.zip`，在游戏启动前完成资源整理、优先级合并、冲突处理和 PCK 生成，最后输出一个可以放进 STS2 `mods` 目录的完整 mod：
 
 ```text
 dist/card_replace/
@@ -52,11 +52,14 @@ res://images/atlases/card_atlas.sprites/<pool>/<card>.tres
 
 ## 输入格式
 
-当前只支持：
+当前支持两类输入：
 
 ```text
 *.cardartpack.json
+未加密卡面替换 mod 文件夹 / .pck / .zip
 ```
+
+### `.cardartpack.json`
 
 每个 override 使用：
 
@@ -67,11 +70,36 @@ res://images/atlases/card_atlas.sprites/<pool>/<card>.tres
 
 GIF 动图暂时搁置。现在只能使用包里提供的静态 PNG fallback。
 
+### 未加密 PCK mod
+
+可以输入：
+
+```text
+D:\steam\steamapps\common\Slay the Spire 2\mods\某个卡面mod
+D:\path\to\some_card_art_mod.pck
+D:\path\to\some_card_art_mod.zip
+```
+
+文件夹输入会扫描该目录第一层的 `*.pck`。zip 输入会先解压到临时目录，再扫描其中的 `*.pck`。
+
+当前识别这类 Godot 已导入卡面资源：
+
+```text
+generated/assets/card_art/MegaCrit.Sts2.Core.Models.Cards.<CardName>_card_art.jpg.import
+.godot/imported/MegaCrit.Sts2.Core.Models.Cards.<CardName>_card_art.jpg-<hash>.ctex
+```
+
+Builder 会从文件名恢复 `cardId`，提取 `.import + .ctex`，再把它们纳入同一套 priority 合并。
+
+加密 PCK 不支持。现有 DLL 的逻辑不会被通用反编译；我们只导入 PCK 里能识别出的卡面资源。
+
 ## 优先级规则
 
 优先级在构建期解决。
 
-`priority` 数字越大，优先级越高。多个启用包替换同一个 `source_path` 时，高优先级覆盖低优先级。
+`priority` 数字越大，优先级越高。多个启用包替换同一张卡时，高优先级覆盖低优先级。
+
+冲突主键优先使用 `cardId`，没有 `cardId` 时才回退到 `source_path`。这样 `.cardartpack.json` 和从 PCK 导入的资源只要能恢复到同一张卡，也会进入同一套覆盖规则。
 
 当前本地工作流可以把文件名前缀转换成 priority：
 
@@ -81,7 +109,7 @@ GIF 动图暂时搁置。现在只能使用包里提供的静态 PNG fallback。
 3-xxx.cardartpack.json -> 再低一级
 ```
 
-Builder 本身只读取 `build_config.json` 中的 `priority`。
+Builder 本身只读取 `build_config.json` 中的 `priority`。`.cardartpack.json`、PCK 文件夹和 zip 都会进入同一张候选表；如果它们指向同一个 `cardId`，高 priority 的来源胜出。
 
 构建后会输出：
 
@@ -114,7 +142,7 @@ build_config.json
 
 然后修改本机路径和包列表。
 
-示例：
+推荐使用数组形式，后续扩展更方便：
 
 ```json
 {
@@ -125,22 +153,39 @@ build_config.json
   "mod_manifest_path": "card_replace.json",
   "staging_root": "build\\staging_godot_project",
   "pck_name": "card_replace.pck",
-  "packs": [
+  "inputs": [
     {
       "id": "pack_1",
       "path": "D:\\path\\to\\1-pack.cardartpack.json",
       "enabled": true,
-      "priority": 99999
+      "priority": 99999,
+      "type": "cardartpack"
     },
     {
-      "id": "pack_2",
-      "path": "D:\\path\\to\\2-pack.cardartpack.json",
+      "id": "existing_pck_mod",
+      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\猎宝卡面",
       "enabled": true,
-      "priority": 99998
+      "priority": 90000,
+      "type": "folder"
     }
   ]
 }
 ```
+
+也支持简单 KV 形式：
+
+```json
+{
+  "inputs": {
+    "D:\\path\\to\\1-pack.cardartpack.json": 99999,
+    "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\猎宝卡面": 90000
+  }
+}
+```
+
+如果省略 `type`，Builder 会按路径自动判断：`.cardartpack.json`、`.pck`、`.zip` 或文件夹。
+
+旧版 `packs` 数组仍然兼容，但新配置建议使用 `inputs`。
 
 `build_config.json` 已经被 `.gitignore` 忽略，不会把本机绝对路径提交到仓库。
 
@@ -236,13 +281,16 @@ CardReplaceBuilder 统一按 priority 合并
 
 目前支持的输入：
 
-- `.cardartpack.json`：已支持。
+- `.cardartpack.json`
+- 未加密 PCK 文件
+- 包含 PCK 的 mod 文件夹
+- 包含 PCK 的 zip
 
-后续可扩展的输入：
+仍不支持的输入：
 
-- 普通图片目录：需要能映射到 `res://images/packed/card_portraits/...`。
-- 已解包 PCK：可以做，但需要处理 `.ctex` 或恢复原始图片路径。
-- 现有 DLL 逻辑：不能通用转换，只能针对具体 mod 分析。
+- 加密 PCK
+- 只靠 DLL 运行时逻辑、PCK 内没有可识别卡面资源的 mod
+- 没有路径映射信息的普通散图目录
 
 ## 关于 PCK 导入
 
@@ -254,7 +302,7 @@ CardReplaceBuilder 统一按 priority 合并
 .godot/imported/MegaCrit.Sts2.Core.Models.Cards.<CardName>_card_art.jpg-<hash>.ctex
 ```
 
-也就是说，它不是原始 `.cardartpack.json`，而是 Godot 导入后的纹理缓存。它理论上可以成为一种新的输入源，但需要单独实现：
+也就是说，它不是原始 `.cardartpack.json`，而是 Godot 导入后的纹理缓存。它现在已经作为输入源接入，处理方式是：
 
 1. 读取 PCK 目录表。
 2. 提取 `.ctex` 和对应 `.import` 文件。
@@ -268,14 +316,14 @@ CardReplaceBuilder 统一按 priority 合并
 
 - 保持 `.cardartpack.json` 作为主输入格式。
 - 增加 pack1 目录扫描，把 `1-*.cardartpack.json` 自动转换成最高 priority。
-- 增加现有 PCK 目录解析和导入器。
-- 支持把 PCK 中的 `.ctex` 卡面纳入同一优先级系统。
+- 继续完善现有 PCK 目录解析和导入器。
+- 支持更多 PCK 卡面命名格式。
 - 生成更完整的 manifest，让 RitsuLib 页面能显示每个来源的胜出/被覆盖关系。
 - 单独设计 GIF 支持。GIF 不适合强塞进当前静态 `Texture2D` 路线。
 
 ## 当前限制
 
 - GIF 动图未实现。
-- 现有 DLL/PCK 卡面 mod 还不能自动导入。
+- 现有未加密 PCK 卡面 mod 可以作为输入导入，但只识别当前已知的 `MegaCrit.Sts2.Core.Models.Cards.*_card_art` 资源格式。
 - 当前 runtime patch 使用 `NCard` 的私有字段 `_portrait` 和 `_ancientPortrait`。这是小范围反射，作用是设置 UI 节点贴图，不参与图片解码或资源扫描。
 - PCK 体积取决于 Godot 纹理导入设置。当前已经改为每张胜出卡面只输出一份生成图，不再生成原路径、beta 镜像、JPG 诊断三份资源。
