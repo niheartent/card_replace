@@ -217,21 +217,30 @@ public static class Program
                 continue;
             }
 
+            var isAnimated = item.Type.Equals("animated_gif", StringComparison.OrdinalIgnoreCase)
+                && item.Frames.Count > 0;
             var base64 = FirstNonEmpty(item.PngBase64, item.EditSourcePngBase64);
             if (string.IsNullOrWhiteSpace(base64))
             {
-                Console.WriteLine($"Skipped {item.SourcePath}: no png_base64 or edit_source_png_base64 in {input.Path}");
-                continue;
+                if (!isAnimated)
+                {
+                    Console.WriteLine($"Skipped {item.SourcePath}: no png_base64 or edit_source_png_base64 in {input.Path}");
+                    continue;
+                }
             }
 
             var cardId = ToCardId(item.SourcePath);
+            IReplacementAsset asset = isAnimated
+                ? new AnimatedCardArtPackAsset(item.SourcePath, item.Frames)
+                : new CardArtPackAsset(item.SourcePath, base64!);
+
             yield return new ReplacementCandidate(
                 ConflictKey(cardId, item.SourcePath),
                 item.SourcePath,
                 cardId,
                 input,
                 item.Type,
-                new CardArtPackAsset(item.SourcePath, base64));
+                asset);
         }
     }
 
@@ -446,7 +455,27 @@ public static class Program
                 sourcePath,
                 GetString(item, "type") ?? "static",
                 GetString(item, "png_base64"),
-                GetString(item, "edit_source_png_base64"));
+                GetString(item, "edit_source_png_base64"),
+                ReadCardArtPackFrames(item).ToList());
+        }
+    }
+
+    private static IEnumerable<CardArtPackFrameData> ReadCardArtPackFrames(JsonElement item)
+    {
+        if (!item.TryGetProperty("frames", out var frames) || frames.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        foreach (var frame in frames.EnumerateArray())
+        {
+            var base64 = GetString(frame, "png_base64");
+            if (string.IsNullOrWhiteSpace(base64))
+            {
+                continue;
+            }
+
+            yield return new CardArtPackFrameData(base64, GetSingle(frame, "delay", 0.1f));
         }
     }
 
@@ -748,6 +777,13 @@ public static class Program
             : null;
     }
 
+    private static float GetSingle(JsonElement element, string propertyName, float fallback)
+    {
+        return element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetSingle()
+            : fallback;
+    }
+
     private static string? FirstNonEmpty(params string?[] values)
     {
         return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
@@ -898,7 +934,14 @@ public enum InputKind
     PckFile
 }
 
-public sealed record CardArtPackOverrideData(string SourcePath, string Type, string? PngBase64, string? EditSourcePngBase64);
+public sealed record CardArtPackOverrideData(
+    string SourcePath,
+    string Type,
+    string? PngBase64,
+    string? EditSourcePngBase64,
+    List<CardArtPackFrameData> Frames);
+
+public sealed record CardArtPackFrameData(string PngBase64, float Delay);
 
 public sealed record PckReplacementDocument(
     [property: JsonPropertyName("normalReplacements")] List<PckNormalReplacement> NormalReplacements);
@@ -934,6 +977,68 @@ public sealed record CardArtPackAsset(string SourcePath, string Base64) : IRepla
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         File.WriteAllBytes(outputPath, Convert.FromBase64String(Base64));
         return StagedPath.Replace('\\', '/');
+    }
+}
+
+public sealed record AnimatedCardArtPackAsset(string SourcePath, List<CardArtPackFrameData> Frames) : IReplacementAsset
+{
+    public string Image => $"res://{AnimatedTexturePath.Replace('\\', '/')}";
+
+    private string CardPathWithoutExtension => Path.Combine(
+        Path.GetDirectoryName(ProgramPrivate.ToGeneratedCardRelativePath(SourcePath)) ?? "",
+        Path.GetFileNameWithoutExtension(SourcePath));
+
+    private string FrameDirectory => $"{CardPathWithoutExtension}_frames";
+
+    private string AnimatedTexturePath => $"{CardPathWithoutExtension}.tres";
+
+    public string Stage(string stagingRoot)
+    {
+        var frameRoot = Path.Combine(stagingRoot, FrameDirectory);
+        Directory.CreateDirectory(frameRoot);
+
+        var relativeFramePaths = new List<string>(Frames.Count);
+        for (var index = 0; index < Frames.Count; index++)
+        {
+            var relativePath = Path.Combine(FrameDirectory, $"frame_{index:D3}.png");
+            var outputPath = Path.Combine(stagingRoot, relativePath);
+            File.WriteAllBytes(outputPath, Convert.FromBase64String(Frames[index].PngBase64));
+            relativeFramePaths.Add(relativePath.Replace('\\', '/'));
+        }
+
+        var texturePath = Path.Combine(stagingRoot, AnimatedTexturePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(texturePath)!);
+        File.WriteAllText(texturePath, BuildAnimatedTextureResource(relativeFramePaths));
+        return AnimatedTexturePath.Replace('\\', '/');
+    }
+
+    private string BuildAnimatedTextureResource(List<string> relativeFramePaths)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"[gd_resource type=\"AnimatedTexture\" load_steps={relativeFramePaths.Count + 1} format=3]");
+        builder.AppendLine();
+
+        for (var index = 0; index < relativeFramePaths.Count; index++)
+        {
+            builder.AppendLine($"[ext_resource type=\"Texture2D\" path=\"res://{relativeFramePaths[index]}\" id=\"{index + 1}\"]");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("[resource]");
+        builder.AppendLine($"frames = {relativeFramePaths.Count}");
+
+        for (var index = 0; index < relativeFramePaths.Count; index++)
+        {
+            builder.AppendLine($"frame_{index}/texture = ExtResource(\"{index + 1}\")");
+            builder.AppendLine($"frame_{index}/duration = {FormatFloat(Math.Max(Frames[index].Delay, 0.01f))}");
+        }
+
+        return builder.ToString();
+    }
+
+    private static string FormatFloat(float value)
+    {
+        return value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
     }
 }
 

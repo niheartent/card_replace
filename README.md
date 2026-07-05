@@ -18,13 +18,14 @@ dist/card_replace/
 ## 功能
 
 - 读取 Card Art Editor 风格的 `.cardartpack.json`。
+- 支持 `.cardartpack.json` 内的 `animated_gif`，构建期会转成 Godot `AnimatedTexture`。
 - 读取未加密的卡面替换 mod 文件夹、`.pck` 或 `.zip`。
 - 支持 Godot 已导入纹理资源：`.import + .ctex`。
 - 支持部分现有 PCK 内自带的 `card_replacements.json`。
 - 按 `priority` 合并同名卡面，数字越大优先级越高。
 - 输出冲突报告和最终 manifest，RitsuLib 配置页可查看生成信息。
 
-当前不支持 GIF 动图和加密 PCK。
+当前不支持加密 PCK。
 
 ## 配置
 
