@@ -1,11 +1,88 @@
 # Card Replace
 
-Card Replace is a high-performance card art replacement generator for Slay the Spire 2.
+高性能《Slay the Spire 2》卡面替换生成工具。
 
-It is not an in-game editor. Instead, it merges card art sources before the game starts and outputs a ready-to-use mod:
+它在游戏启动前读取目标文件夹中的资源，按优先级合并卡面，导入纹理，并输出一个可以直接安装的最终 mod。游戏运行时只加载生成好的 PCK。
+
+## 功能
+
+- 读取 Card Art Editor 格式的 `.cardartpack.json`。
+- 支持 `.cardartpack.json` 内的 `animated_gif`，生成时转换为 Godot `AnimatedTexture`。
+- 读取兼容的未加密卡面 mod 文件夹、`.zip`、`.pck`。
+- 支持 Godot 导入纹理：`.import + .ctex`。
+- 同名卡面按优先级合并，数字越大越优先。
+- 自动构建 `card_replace.dll` 并输出完整 mod。
+- RitsuLib 配置页显示本次生成结果，支持中文和英文。
+
+当前不支持加密 PCK。
+
+## 前置条件
+
+- .NET 9 SDK。
+- Godot 4.5.1 Mono console 版。
+- 《Slay the Spire 2》。
+- 游戏 mod 目录中已安装 `STS2-RitsuLib`，版本至少 `0.4.51`。
+
+## 目标文件夹
+
+目标文件夹里放要打包的资源，以及固定文件名 `priority.json`：
 
 ```text
-dist/card_replace/
+<目标文件夹>/
+  priority.json
+  <卡面包>.cardartpack.json
+  <兼容卡面mod>.zip
+  <兼容卡面mod>.pck
+```
+
+`priority.json` 是 KV JSON。key 是目标文件夹内的相对路径，value 是优先级：
+
+```json
+{
+  "<卡面包>.cardartpack.json": 100000,
+  "<兼容卡面mod>.zip": 99999,
+  "<兼容卡面mod>.pck": 99998
+}
+```
+
+也可以写对象值：
+
+```json
+{
+  "some-pack.zip": {
+    "priority": 99990,
+    "enabled": true,
+    "id": "some_pack",
+    "type": "zip"
+  }
+}
+```
+
+`type` 通常可以省略，工具会按路径自动判断。支持 `cardartpack`、`zip`、`pck`、`folder`。
+
+## 生成
+
+在仓库根目录执行：
+
+```powershell
+dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- `
+  "<Godot 4.5.1 Mono console exe>" `
+  "<目标文件夹>"
+```
+
+如果要合并多个目标文件夹：
+
+```powershell
+dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- `
+  "<Godot 4.5.1 Mono console exe>" `
+  "<目标文件夹1>" `
+  "<目标文件夹2>"
+```
+
+生成结果会放到第一个目标文件夹下：
+
+```text
+<目标文件夹>/_generated/card_replace/
   card_replace.dll
   card_replace.json
   card_replace.pck
@@ -13,132 +90,166 @@ dist/card_replace/
   conflicts.report.cardreplace
 ```
 
-After placing `dist/card_replace` into the game's `mods/card_replace` directory, the game only loads the generated PCK textures at startup. Runtime does not read `.cardartpack.json`, scan external image folders, or dynamically decode images.
+## 安装
+
+把生成的 `card_replace` 文件夹放入游戏的 `mods` 文件夹下。
+
+最终目录结构：
+
+```text
+<Slay the Spire 2>/mods/card_replace/
+  card_replace.dll
+  card_replace.json
+  card_replace.pck
+  manifest.final.cardreplace
+  conflicts.report.cardreplace
+```
+
+同时确认游戏的 `mods` 文件夹下已有 `STS2-RitsuLib`。
+
+## 验证
+
+启动游戏后，RitsuLib 配置页会显示 Card Replace 的生成信息。
+
+日志位置：
+
+```text
+%APPDATA%\SlayTheSpire2\logs\godot.log
+```
+
+预期日志：
+
+```text
+card_replace: loaded generated pck
+card_replace: loaded replacement map entries=<count>
+card_replace: Harmony patches applied
+card_replace: report pckLoaded=True
+```
+
+## 报告
+
+- `manifest.final.cardreplace`：记录本次目标文件夹、优先级和最终生效的替换。
+- `conflicts.report.cardreplace`：记录同名卡面的冲突、胜出项和被覆盖项。
+
+---
+
+# English
+
+Card Replace is a high-performance card art replacement generator for Slay the Spire 2.
+
+It reads resources from a target folder before the game starts, merges card art by priority, imports textures, and outputs a ready-to-install mod. At runtime, the game only loads the generated PCK.
 
 ## Features
 
-- Reads Card Art Editor style `.cardartpack.json` files.
-- Supports `animated_gif` entries inside `.cardartpack.json`; frames are converted to Godot `AnimatedTexture` during build.
-- Reads compatible unencrypted card art replacement mod folders, `.pck` files, and `.zip` files.
-- Supports Godot imported texture assets: `.import + .ctex`.
-- Supports some existing PCK mods that include `card_replacements.json`.
-- Merges duplicate card art by `priority`; higher numbers win.
-- Writes a final manifest and a conflict report. The RitsuLib settings page shows the generated pack status in English or Chinese based on the game language.
+- Reads Card Art Editor style `.cardartpack.json`.
+- Supports `animated_gif` entries by converting them to Godot `AnimatedTexture` during generation.
+- Reads compatible unencrypted card art mod folders, `.zip`, and `.pck`.
+- Supports Godot imported textures: `.import + .ctex`.
+- Resolves duplicate card art by priority. Higher numbers win.
+- Builds `card_replace.dll` automatically and outputs the final mod.
+- Shows generated pack information in the RitsuLib settings page, localized in English or Chinese.
 
 Encrypted PCK files are not supported.
 
-## Configuration
+## Requirements
 
-Copy:
+- .NET 9 SDK.
+- Godot 4.5.1 Mono console build.
+- Slay the Spire 2.
+- `STS2-RitsuLib` installed in the game mod directory, version `0.4.51` or newer.
+
+## Target Folder
+
+The target folder contains resources and a fixed `priority.json` file:
 
 ```text
-build_config.example.json
+<target folder>/
+  priority.json
+  <card art pack>.cardartpack.json
+  <compatible card art mod>.zip
+  <compatible card art mod>.pck
 ```
 
-to:
-
-```text
-build_config.json
-```
-
-Then edit local paths and input sources:
+`priority.json` is a KV JSON file. Keys are paths relative to the target folder. Values are priorities:
 
 ```json
 {
-  "godot_exe": "D:\\workspace\\slaythespire2\\mods\\Godot_v4.5.1-stable_mono_win64\\Godot_v4.5.1-stable_mono_win64_console.exe",
-  "output_root": "build\\generated",
-  "output_mod_dir": "dist\\card_replace",
-  "loader_dll_path": ".godot\\mono\\temp\\bin\\Debug\\card_replace.dll",
-  "mod_manifest_path": "card_replace.json",
-  "staging_root": "build\\staging_godot_project",
-  "pck_name": "card_replace.pck",
-  "inputs": [
-    {
-      "id": "pack_1",
-      "path": "D:\\path\\to\\1-pack.cardartpack.json",
-      "enabled": true,
-      "priority": 99999,
-      "type": "cardartpack"
-    },
-    {
-      "id": "some_existing_mod_zip",
-      "path": "D:\\path\\to\\2-existing-card-art-mod.zip",
-      "enabled": true,
-      "priority": 99998,
-      "type": "zip"
-    },
-    {
-      "id": "some_existing_mod_folder",
-      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\Some Card Art Mod",
-      "enabled": true,
-      "priority": 99997,
-      "type": "folder"
-    }
-  ]
+  "<card art pack>.cardartpack.json": 100000,
+  "<compatible card art mod>.zip": 99999,
+  "<compatible card art mod>.pck": 99998
 }
 ```
 
-Supported `type` values:
-
-```text
-cardartpack
-zip
-pck
-folder
-```
-
-`type` can be omitted when the Builder can infer it from the path.
-
-## Priority
-
-`priority` is higher-wins. When multiple inputs replace the same card, the input with the highest priority wins.
-
-You can keep a human-readable priority file like this:
+Object values are also supported:
 
 ```json
 {
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\1-pack.cardartpack.json": 99999,
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\2-pack.zip": 99998,
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\3-pack.cardartpack.json": 99997
+  "some-pack.zip": {
+    "priority": 99990,
+    "enabled": true,
+    "id": "some_pack",
+    "type": "zip"
+  }
 }
 ```
 
-This KV file is useful as a readable priority table. The actual build still uses `build_config.json`.
+`type` is usually optional. Supported types are `cardartpack`, `zip`, `pck`, and `folder`.
 
-## Build
+## Generate
 
 Run from the repository root:
 
 ```powershell
-cd D:\workspace\slaythespire2\mods\card_replace
-dotnet build .\card_replace.csproj -v:minimal -p:SkipModDeploy=true
-dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- .\build_config.json
+dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- `
+  "<Godot 4.5.1 Mono console exe>" `
+  "<target folder>"
 ```
 
-The generated mod is written to:
+To merge multiple target folders:
+
+```powershell
+dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- `
+  "<Godot 4.5.1 Mono console exe>" `
+  "<target folder 1>" `
+  "<target folder 2>"
+```
+
+The generated mod is written under the first target folder:
 
 ```text
-dist/card_replace
+<target folder>/_generated/card_replace/
+  card_replace.dll
+  card_replace.json
+  card_replace.pck
+  manifest.final.cardreplace
+  conflicts.report.cardreplace
 ```
 
 ## Install
 
-Close the game, then copy the generated mod folder into the game mod directory:
+Put the generated `card_replace` folder into the game's `mods` folder.
 
-```powershell
-$src = "D:\workspace\slaythespire2\mods\card_replace\dist\card_replace"
-$dst = "D:\steam\steamapps\common\Slay the Spire 2\mods\card_replace"
+Final layout:
 
-if (Test-Path $dst) {
-  Remove-Item -LiteralPath $dst -Recurse -Force
-}
+```text
+<Slay the Spire 2>/mods/card_replace/
+  card_replace.dll
+  card_replace.json
+  card_replace.pck
+  manifest.final.cardreplace
+  conflicts.report.cardreplace
+```
 
-New-Item -ItemType Directory -Path $dst | Out-Null
-Copy-Item -LiteralPath (Join-Path $src "card_replace.dll") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "card_replace.json") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "card_replace.pck") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "manifest.final.cardreplace") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "conflicts.report.cardreplace") -Destination $dst -Force
+Also make sure `STS2-RitsuLib` exists in the game's `mods` folder.
+
+## Verify
+
+The RitsuLib settings page should show Card Replace build information after the game starts.
+
+Log path:
+
+```text
+%APPDATA%\SlayTheSpire2\logs\godot.log
 ```
 
 Expected log lines:
@@ -149,195 +260,3 @@ card_replace: loaded replacement map entries=<count>
 card_replace: Harmony patches applied
 card_replace: report pckLoaded=True
 ```
-
-Log path:
-
-```text
-C:\Users\<user>\AppData\Roaming\SlayTheSpire2\logs\godot.log
-```
-
-## Reports
-
-The build writes:
-
-```text
-manifest.final.cardreplace
-conflicts.report.cardreplace
-```
-
-`manifest.final.cardreplace` records final winning replacements and input pack metadata.
-
-`conflicts.report.cardreplace` records duplicate-card conflicts, winners, and overridden sources.
-
----
-
-# Card Replace 中文说明
-
-Card Replace 是一个面向《Slay the Spire 2》的高性能卡面替换生成工具。
-
-它不是游戏内编辑器，而是在游戏启动前把多个卡面来源合并成一个最终 mod：
-
-```text
-dist/card_replace/
-  card_replace.dll
-  card_replace.json
-  card_replace.pck
-  manifest.final.cardreplace
-  conflicts.report.cardreplace
-```
-
-把生成后的 `dist/card_replace` 放到游戏的 `mods/card_replace` 目录后，游戏启动时只加载已经打包好的 PCK 纹理。运行时不会读取 `.cardartpack.json`，不会扫描外部图片目录，也不会动态解码图片。
-
-## 功能
-
-- 读取 Card Art Editor 风格的 `.cardartpack.json`。
-- 支持 `.cardartpack.json` 内的 `animated_gif`，构建期会转成 Godot `AnimatedTexture`。
-- 读取兼容的未加密卡面替换 mod 文件夹、`.pck` 或 `.zip`。
-- 支持 Godot 已导入纹理资源：`.import + .ctex`。
-- 支持部分现有 PCK 内自带的 `card_replacements.json`。
-- 按 `priority` 合并同名卡面，数字越大优先级越高。
-- 输出最终 manifest 和冲突报告。RitsuLib 配置页会根据游戏语言显示中文或英文。
-
-当前不支持加密 PCK。
-
-## 配置
-
-复制：
-
-```text
-build_config.example.json
-```
-
-为：
-
-```text
-build_config.json
-```
-
-然后修改本机路径和输入列表：
-
-```json
-{
-  "godot_exe": "D:\\workspace\\slaythespire2\\mods\\Godot_v4.5.1-stable_mono_win64\\Godot_v4.5.1-stable_mono_win64_console.exe",
-  "output_root": "build\\generated",
-  "output_mod_dir": "dist\\card_replace",
-  "loader_dll_path": ".godot\\mono\\temp\\bin\\Debug\\card_replace.dll",
-  "mod_manifest_path": "card_replace.json",
-  "staging_root": "build\\staging_godot_project",
-  "pck_name": "card_replace.pck",
-  "inputs": [
-    {
-      "id": "pack_1",
-      "path": "D:\\path\\to\\1-pack.cardartpack.json",
-      "enabled": true,
-      "priority": 99999,
-      "type": "cardartpack"
-    },
-    {
-      "id": "some_existing_mod_zip",
-      "path": "D:\\path\\to\\2-existing-card-art-mod.zip",
-      "enabled": true,
-      "priority": 99998,
-      "type": "zip"
-    },
-    {
-      "id": "some_existing_mod_folder",
-      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\某个卡面mod",
-      "enabled": true,
-      "priority": 99997,
-      "type": "folder"
-    }
-  ]
-}
-```
-
-`type` 可选值：
-
-```text
-cardartpack
-zip
-pck
-folder
-```
-
-也可以省略 `type`，Builder 会按路径自动判断。
-
-## 优先级
-
-`priority` 数字越大优先级越高。多个输入替换同一张卡时，高优先级胜出。
-
-如果用文件名前缀排序，可以这样写：
-
-```json
-{
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\1-pack.cardartpack.json": 99999,
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\2-pack.zip": 99998,
-  "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\3-pack.cardartpack.json": 99997
-}
-```
-
-这个 KV 文件适合做人看的优先级表；实际构建仍以 `build_config.json` 为准。
-
-## 生成
-
-在仓库根目录执行：
-
-```powershell
-cd D:\workspace\slaythespire2\mods\card_replace
-dotnet build .\card_replace.csproj -v:minimal -p:SkipModDeploy=true
-dotnet run --project .\tools\CardReplaceBuilder\CardReplaceBuilder.csproj -- .\build_config.json
-```
-
-成功后会输出：
-
-```text
-dist/card_replace
-```
-
-## 安装
-
-关闭游戏，然后复制生成结果到游戏 mod 目录：
-
-```powershell
-$src = "D:\workspace\slaythespire2\mods\card_replace\dist\card_replace"
-$dst = "D:\steam\steamapps\common\Slay the Spire 2\mods\card_replace"
-
-if (Test-Path $dst) {
-  Remove-Item -LiteralPath $dst -Recurse -Force
-}
-
-New-Item -ItemType Directory -Path $dst | Out-Null
-Copy-Item -LiteralPath (Join-Path $src "card_replace.dll") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "card_replace.json") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "card_replace.pck") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "manifest.final.cardreplace") -Destination $dst -Force
-Copy-Item -LiteralPath (Join-Path $src "conflicts.report.cardreplace") -Destination $dst -Force
-```
-
-重启游戏后，在日志里应看到：
-
-```text
-card_replace: loaded generated pck
-card_replace: loaded replacement map entries=<count>
-card_replace: Harmony patches applied
-card_replace: report pckLoaded=True
-```
-
-日志位置：
-
-```text
-C:\Users\<user>\AppData\Roaming\SlayTheSpire2\logs\godot.log
-```
-
-## 输出报告
-
-生成后会得到两个报告：
-
-```text
-manifest.final.cardreplace
-conflicts.report.cardreplace
-```
-
-`manifest.final.cardreplace` 记录最终胜出的卡面和输入包信息。
-
-`conflicts.report.cardreplace` 记录同名卡冲突、胜出来源和被覆盖来源。

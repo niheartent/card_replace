@@ -13,6 +13,7 @@ public static class Program
     private const string FinalManifestName = "manifest.final.cardreplace";
     private const string ConflictReportName = "conflicts.report.cardreplace";
     private const string ReplacementMapPath = "generated/card_replace/card_replacements.json";
+    private const string OutputFolderName = "_generated";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -23,21 +24,21 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        var configPath = args.Length > 0 ? args[0] : "build_config.json";
-        if (!File.Exists(configPath))
+        if (args.Length < 2)
         {
-            Console.Error.WriteLine($"Config not found: {Path.GetFullPath(configPath)}");
-            Console.Error.WriteLine("Create one from build_config.example.json, then run:");
-            Console.Error.WriteLine("  dotnet run --project tools/CardReplaceBuilder -- build_config.json");
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  dotnet run --project tools/CardReplaceBuilder -- <Godot console exe> <target folder> [target folder...]");
             return 2;
         }
 
         try
         {
-            var config = LoadConfig(configPath);
-            var result = Build(config, Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? Directory.GetCurrentDirectory());
+            var projectRoot = FindProjectRoot();
+            var options = CreateBuildOptions(projectRoot, args[0], args.Skip(1).ToList());
+            var result = Build(options);
             Console.WriteLine($"Built {result.ReplacementCount} replacement(s).");
             Console.WriteLine($"PCK: {result.PckPath}");
+            Console.WriteLine($"Mod: {result.ModPath}");
             return 0;
         }
         catch (Exception ex)
@@ -47,36 +48,58 @@ public static class Program
         }
     }
 
-    private static BuildConfig LoadConfig(string configPath)
+    private static BuildOptions CreateBuildOptions(string projectRoot, string godotExe, List<string> resourcePackDirs)
     {
-        var config = JsonSerializer.Deserialize<BuildConfig>(File.ReadAllText(configPath), JsonOptions)
-            ?? throw new InvalidOperationException($"Invalid config: {configPath}");
+        if (string.IsNullOrWhiteSpace(godotExe))
+        {
+            throw new InvalidOperationException("Godot console exe path is empty.");
+        }
 
-        return config;
+        var normalizedResourcePackDirs = resourcePackDirs
+            .Select(path => Path.GetFullPath(path))
+            .ToList();
+
+        if (normalizedResourcePackDirs.Count == 0)
+        {
+            throw new InvalidOperationException("Pass at least one target folder.");
+        }
+
+        var outputRoot = Path.Combine(normalizedResourcePackDirs[0], OutputFolderName);
+
+        return new BuildOptions(
+            ProjectRoot: projectRoot,
+            GodotExe: Path.GetFullPath(godotExe),
+            ResourcePackDirs: normalizedResourcePackDirs,
+            OutputRoot: Path.Combine(outputRoot, "build"),
+            OutputModDir: Path.Combine(outputRoot, "card_replace"),
+            LoaderDllPath: Path.Combine(projectRoot, ".godot", "mono", "temp", "bin", "Debug", "card_replace.dll"),
+            ModManifestPath: Path.Combine(projectRoot, "card_replace.json"),
+            StagingRoot: Path.Combine(outputRoot, "staging_godot_project"),
+            PckName: DefaultPckName);
     }
 
-    private static BuildResult Build(BuildConfig config, string configRoot)
+    private static BuildResult Build(BuildOptions options)
     {
-        var outputRoot = ResolvePath(configRoot, config.OutputRoot);
-        var stagingRoot = ResolvePath(configRoot, config.StagingRoot);
-        var pckPath = ResolvePath(outputRoot, string.IsNullOrWhiteSpace(config.PckName) ? DefaultPckName : config.PckName);
+        var outputRoot = options.OutputRoot;
+        var stagingRoot = options.StagingRoot;
+        var pckPath = Path.Combine(outputRoot, options.PckName);
 
         Directory.CreateDirectory(outputRoot);
         ResetDirectory(stagingRoot);
         WriteGodotProjectFiles(stagingRoot);
 
-        var inputContexts = ResolveInputContexts(config, configRoot)
-            .Where(input => input.Enabled)
-            .OrderBy(input => input.Priority)
-            .ThenBy(input => input.Order)
+        var sourceContexts = ResolveSourceContexts(options.ResourcePackDirs)
+            .Where(source => source.Enabled)
+            .OrderBy(source => source.Priority)
+            .ThenBy(source => source.Order)
             .ToList();
 
-        if (inputContexts.Count == 0)
+        if (sourceContexts.Count == 0)
         {
-            throw new InvalidOperationException("No enabled inputs.");
+            throw new InvalidOperationException("No enabled entries were found. Check priority.json in the target folder.");
         }
 
-        var candidates = LoadCandidates(inputContexts, stagingRoot);
+        var candidates = LoadCandidates(sourceContexts, stagingRoot);
         var winners = ResolveWinners(candidates, out var conflicts);
         var replacements = StageWinningAssets(winners.Values.ToList(), stagingRoot);
 
@@ -91,9 +114,9 @@ public static class Program
 
         var finalManifest = new FinalManifest(
             DateTimeOffset.Now,
-            inputContexts.Count,
+            sourceContexts.Count,
             replacements.Count,
-            inputContexts.Select(input => new FinalPack(input.Id, input.Path, input.Priority, input.Kind.ToString())).ToList(),
+            sourceContexts.Select(source => new FinalPack(source.Id, source.Path, source.Priority, source.Kind.ToString())).ToList(),
             replacements.OrderBy(item => item.CardId, StringComparer.OrdinalIgnoreCase).ToList());
 
         var conflictReport = new ConflictReport(
@@ -103,114 +126,149 @@ public static class Program
         WriteJson(Path.Combine(outputRoot, FinalManifestName), finalManifest);
         WriteJson(Path.Combine(outputRoot, ConflictReportName), conflictReport);
 
-        if (!string.IsNullOrWhiteSpace(config.GodotExe))
-        {
-            ExportPck(config.GodotExe, stagingRoot, pckPath);
-        }
-        else
-        {
-            Console.WriteLine("godot_exe is empty; staged resources were written but no PCK was exported.");
-        }
+        BuildLoaderDll(options.ProjectRoot);
+        ExportPck(options.GodotExe, stagingRoot, pckPath);
 
-        if (!string.IsNullOrWhiteSpace(config.OutputModDir))
-        {
-            CopyModOutputs(config, configRoot, outputRoot, ResolvePath(configRoot, config.OutputModDir), pckPath);
-        }
+        CopyModOutputs(options, outputRoot, options.OutputModDir, pckPath);
 
-        return new BuildResult(pckPath, replacements.Count);
+        return new BuildResult(pckPath, options.OutputModDir, replacements.Count);
     }
 
-    private static List<InputContext> ResolveInputContexts(BuildConfig config, string configRoot)
+    private static List<ResourceContext> ResolveSourceContexts(
+        List<string> resourcePackDirs)
     {
-        var inputs = new List<InputSource>();
-        inputs.AddRange(ParseInputs(config.Inputs));
-        inputs.AddRange(config.Packs);
+        var sources = new List<ResourceSource>();
+        sources.AddRange(LoadResourcePackSources(resourcePackDirs));
 
-        return inputs
-            .Select((input, order) => InputContext.Create(input, order, configRoot))
+        return sources
+            .Select((source, order) => ResourceContext.Create(source, order))
             .ToList();
     }
 
-    private static IEnumerable<InputSource> ParseInputs(JsonElement inputs)
+    private static IEnumerable<ResourceSource> LoadResourcePackSources(
+        List<string> resourcePackDirs)
     {
-        if (inputs.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        foreach (var indexFile in EnumerateResourcePackIndexFiles(resourcePackDirs))
         {
-            yield break;
-        }
-
-        if (inputs.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in inputs.EnumerateArray())
+            foreach (var source in ReadResourcePackIndex(indexFile))
             {
-                var input = item.Deserialize<InputSource>(JsonOptions);
-                if (input is not null)
-                {
-                    yield return input;
-                }
-            }
-
-            yield break;
-        }
-
-        if (inputs.ValueKind != JsonValueKind.Object)
-        {
-            throw new InvalidOperationException("inputs must be either an array or an object.");
-        }
-
-        foreach (var property in inputs.EnumerateObject())
-        {
-            if (property.Value.ValueKind == JsonValueKind.Number)
-            {
-                yield return new InputSource
-                {
-                    Path = property.Name,
-                    Priority = property.Value.GetInt32()
-                };
-                continue;
-            }
-
-            if (property.Value.ValueKind == JsonValueKind.Object)
-            {
-                var input = property.Value.Deserialize<InputSource>(JsonOptions) ?? new InputSource();
-                input.Path = string.IsNullOrWhiteSpace(input.Path) ? property.Name : input.Path;
-                yield return input;
+                yield return source;
             }
         }
     }
 
-    private static List<ReplacementCandidate> LoadCandidates(List<InputContext> inputs, string stagingRoot)
+    private static IEnumerable<string> EnumerateResourcePackIndexFiles(
+        List<string> resourcePackDirs)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var directory in resourcePackDirs)
+        {
+            var root = Path.GetFullPath(directory);
+            if (!Directory.Exists(root))
+            {
+                throw new DirectoryNotFoundException($"Resource pack directory was not found: {root}");
+            }
+
+            var indexFile = Path.Combine(root, "priority.json");
+            if (!File.Exists(indexFile))
+            {
+                throw new FileNotFoundException($"Resource pack index was not found: {indexFile}");
+            }
+
+            if (seen.Add(indexFile))
+            {
+                yield return indexFile;
+            }
+        }
+    }
+
+    private static IEnumerable<ResourceSource> ReadResourcePackIndex(string indexFile)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(indexFile), new JsonDocumentOptions
+        {
+            AllowTrailingCommas = true,
+            CommentHandling = JsonCommentHandling.Skip
+        });
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Resource pack index must be a path-to-priority object: {indexFile}");
+        }
+
+        foreach (var property in doc.RootElement.EnumerateObject())
+        {
+            var source = ReadResourcePackIndexEntry(indexFile, property);
+            if (source is not null)
+            {
+                yield return source;
+            }
+        }
+    }
+
+    private static ResourceSource? ReadResourcePackIndexEntry(string indexFile, JsonProperty property)
+    {
+        if (property.Value.ValueKind == JsonValueKind.Number)
+        {
+            return new ResourceSource
+            {
+                Path = ResolveResourcePackEntryPath(indexFile, property.Name),
+                Priority = property.Value.GetInt32()
+            };
+        }
+
+        if (property.Value.ValueKind == JsonValueKind.Object)
+        {
+            var source = property.Value.Deserialize<ResourceSource>(JsonOptions) ?? new ResourceSource();
+            source.Path = ResolveResourcePackEntryPath(
+                indexFile,
+                string.IsNullOrWhiteSpace(source.Path) ? property.Name : source.Path);
+            return source;
+        }
+
+        throw new InvalidOperationException($"Resource pack index entry must be a number or object: {indexFile} -> {property.Name}");
+    }
+
+    private static string ResolveResourcePackEntryPath(string indexFile, string entryPath)
+    {
+        return Path.GetFullPath(Path.IsPathRooted(entryPath)
+            ? entryPath
+            : Path.Combine(Path.GetDirectoryName(indexFile) ?? Directory.GetCurrentDirectory(), entryPath));
+    }
+
+    private static List<ReplacementCandidate> LoadCandidates(List<ResourceContext> sources, string stagingRoot)
     {
         var candidates = new List<ReplacementCandidate>();
-        var zipRoot = Path.Combine(stagingRoot, "_input_zips");
+        var zipRoot = Path.Combine(stagingRoot, "_source_zips");
 
-        foreach (var input in inputs)
+        foreach (var source in sources)
         {
-            switch (input.Kind)
+            switch (source.Kind)
             {
-                case InputKind.CardArtPackJson:
-                    candidates.AddRange(LoadCardArtPackCandidates(input));
+                case ResourceKind.CardArtPackJson:
+                    candidates.AddRange(LoadCardArtPackCandidates(source));
                     break;
-                case InputKind.ModFolder:
-                    candidates.AddRange(LoadModFolderCandidates(input));
+                case ResourceKind.ModFolder:
+                    candidates.AddRange(LoadModFolderCandidates(source));
                     break;
-                case InputKind.PckFile:
-                    candidates.AddRange(LoadPckCandidates(input, input.Path));
+                case ResourceKind.PckFile:
+                    candidates.AddRange(LoadPckCandidates(source, source.Path));
                     break;
-                case InputKind.Zip:
-                    candidates.AddRange(LoadZipCandidates(input, zipRoot));
+                case ResourceKind.Zip:
+                    candidates.AddRange(LoadZipCandidates(source, zipRoot));
                     break;
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(input.Kind), input.Kind, "Unsupported input kind.");
+                    throw new ArgumentOutOfRangeException(nameof(source.Kind), source.Kind, "Unsupported source kind.");
             }
         }
 
-        Console.WriteLine($"Loaded {candidates.Count} replacement candidate(s) from {inputs.Count} input(s).");
+        Console.WriteLine($"Loaded {candidates.Count} replacement candidate(s) from {sources.Count} source(s).");
         return candidates;
     }
 
-    private static IEnumerable<ReplacementCandidate> LoadCardArtPackCandidates(InputContext input)
+    private static IEnumerable<ReplacementCandidate> LoadCardArtPackCandidates(ResourceContext source)
     {
-        foreach (var item in ReadCardArtPackData(input.Path))
+        foreach (var item in ReadCardArtPackData(source.Path))
         {
             if (!IsSupportedSourcePath(item.SourcePath))
             {
@@ -224,7 +282,7 @@ public static class Program
             {
                 if (!isAnimated)
                 {
-                    Console.WriteLine($"Skipped {item.SourcePath}: no png_base64 or edit_source_png_base64 in {input.Path}");
+                    Console.WriteLine($"Skipped {item.SourcePath}: no png_base64 or edit_source_png_base64 in {source.Path}");
                     continue;
                 }
             }
@@ -238,39 +296,39 @@ public static class Program
                 ConflictKey(cardId, item.SourcePath),
                 item.SourcePath,
                 cardId,
-                input,
+                source,
                 item.Type,
                 asset);
         }
     }
 
-    private static IEnumerable<ReplacementCandidate> LoadModFolderCandidates(InputContext input)
+    private static IEnumerable<ReplacementCandidate> LoadModFolderCandidates(ResourceContext source)
     {
-        foreach (var pckPath in Directory.GetFiles(input.Path, "*.pck", SearchOption.TopDirectoryOnly))
+        foreach (var pckPath in Directory.GetFiles(source.Path, "*.pck", SearchOption.TopDirectoryOnly))
         {
-            foreach (var candidate in LoadPckCandidates(input, pckPath))
+            foreach (var candidate in LoadPckCandidates(source, pckPath))
             {
                 yield return candidate;
             }
         }
     }
 
-    private static IEnumerable<ReplacementCandidate> LoadZipCandidates(InputContext input, string zipRoot)
+    private static IEnumerable<ReplacementCandidate> LoadZipCandidates(ResourceContext source, string zipRoot)
     {
-        var extractRoot = Path.Combine(zipRoot, SanitizeFileName(input.Id));
+        var extractRoot = Path.Combine(zipRoot, SanitizeFileName(source.Id));
         ResetDirectory(extractRoot);
-        ZipFile.ExtractToDirectory(input.Path, extractRoot, overwriteFiles: true);
+        ZipFile.ExtractToDirectory(source.Path, extractRoot, overwriteFiles: true);
 
         foreach (var pckPath in Directory.GetFiles(extractRoot, "*.pck", SearchOption.AllDirectories))
         {
-            foreach (var candidate in LoadPckCandidates(input, pckPath))
+            foreach (var candidate in LoadPckCandidates(source, pckPath))
             {
                 yield return candidate;
             }
         }
     }
 
-    private static IEnumerable<ReplacementCandidate> LoadPckCandidates(InputContext input, string pckPath)
+    private static IEnumerable<ReplacementCandidate> LoadPckCandidates(ResourceContext source, string pckPath)
     {
         var pck = GodotPck.Read(pckPath);
         var entriesByPath = pck.Entries.ToDictionary(entry => entry.Path, StringComparer.OrdinalIgnoreCase);
@@ -300,14 +358,14 @@ public static class Program
                 ConflictKey(cardId, sourcePath),
                 sourcePath,
                 cardId,
-                input with { Path = pckPath },
+                source with { Path = pckPath },
                 "pck_imported",
                 new PckImportedAsset(pckPath, importEntry, ctexEntry, sourcePath));
         }
 
         foreach (var mapEntry in pck.Entries.Where(entry => IsPckReplacementMapPath(entry.Path)))
         {
-            foreach (var candidate in LoadPckReplacementMapCandidates(input, pckPath, pck, entriesByPath, mapEntry))
+            foreach (var candidate in LoadPckReplacementMapCandidates(source, pckPath, pck, entriesByPath, mapEntry))
             {
                 count++;
                 yield return candidate;
@@ -318,7 +376,7 @@ public static class Program
     }
 
     private static IEnumerable<ReplacementCandidate> LoadPckReplacementMapCandidates(
-        InputContext input,
+        ResourceContext source,
         string pckPath,
         GodotPck pck,
         Dictionary<string, PckEntry> entriesByPath,
@@ -372,7 +430,7 @@ public static class Program
                 ConflictKey(cardId, replacement.PortraitPath),
                 replacement.PortraitPath,
                 cardId,
-                input with { Path = pckPath },
+                source with { Path = pckPath },
                 "pck_replacement_map",
                 new PckImportedAsset(pckPath, importEntry, ctexEntry, replacement.PortraitPath));
         }
@@ -386,8 +444,8 @@ public static class Program
         conflicts = new Dictionary<string, ConflictEntry>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var candidate in candidates
-                     .OrderBy(candidate => candidate.Input.Priority)
-                     .ThenBy(candidate => candidate.Input.Order))
+                     .OrderBy(candidate => candidate.Source.Priority)
+                     .ThenBy(candidate => candidate.Source.Order))
         {
             if (winners.TryGetValue(candidate.ConflictKey, out var previous))
             {
@@ -420,11 +478,11 @@ public static class Program
                 stagedPath,
                 winner.Asset.Image,
                 winner.CardId,
-                winner.Input.Id,
-                winner.Input.Path,
-                winner.Input.Priority,
+                winner.Source.Id,
+                winner.Source.Path,
+                winner.Source.Priority,
                 winner.Type,
-                winner.Input.Kind.ToString()));
+                winner.Source.Kind.ToString()));
         }
 
         return replacements;
@@ -583,26 +641,31 @@ public static class Program
     }
 
     private static void CopyModOutputs(
-        BuildConfig config,
-        string configRoot,
+        BuildOptions options,
         string outputRoot,
         string outputModDir,
         string pckPath)
     {
-        var loaderDllPath = ResolvePath(configRoot, config.LoaderDllPath);
-        var modManifestPath = ResolvePath(configRoot, config.ModManifestPath);
-
-        RequireFile(loaderDllPath, "Loader DLL was not found. Build the loader first with: dotnet build .\\card_replace.csproj -p:SkipModDeploy=true");
-        RequireFile(modManifestPath, "Mod manifest was not found.");
+        RequireFile(options.LoaderDllPath, "Loader DLL was not found after building the loader.");
+        RequireFile(options.ModManifestPath, "Mod manifest was not found.");
         RequireFile(pckPath, "Generated PCK was not found.");
 
         ResetDirectory(outputModDir);
-        File.Copy(loaderDllPath, Path.Combine(outputModDir, Path.GetFileName(loaderDllPath)), overwrite: true);
-        File.Copy(modManifestPath, Path.Combine(outputModDir, Path.GetFileName(modManifestPath)), overwrite: true);
+        File.Copy(options.LoaderDllPath, Path.Combine(outputModDir, Path.GetFileName(options.LoaderDllPath)), overwrite: true);
+        File.Copy(options.ModManifestPath, Path.Combine(outputModDir, Path.GetFileName(options.ModManifestPath)), overwrite: true);
         File.Copy(pckPath, Path.Combine(outputModDir, Path.GetFileName(pckPath)), overwrite: true);
         CopyIfExists(Path.Combine(outputRoot, FinalManifestName), Path.Combine(outputModDir, FinalManifestName));
         CopyIfExists(Path.Combine(outputRoot, ConflictReportName), Path.Combine(outputModDir, ConflictReportName));
         Console.WriteLine($"Generated mod folder: {outputModDir}");
+    }
+
+    private static void BuildLoaderDll(string projectRoot)
+    {
+        Console.WriteLine("Building card_replace.dll...");
+        RunProcess(
+            "dotnet",
+            $"build \"{Path.Combine(projectRoot, "card_replace.csproj")}\" -v:minimal -p:SkipModDeploy=true",
+            projectRoot);
     }
 
     private static void CopyIfExists(string source, string destination)
@@ -793,41 +856,38 @@ public static class Program
     {
         var chars = value.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_').ToArray();
         var sanitized = new string(chars).Trim('_');
-        return string.IsNullOrWhiteSpace(sanitized) ? "input" : sanitized;
+        return string.IsNullOrWhiteSpace(sanitized) ? "source" : sanitized;
+    }
+
+    private static string FindProjectRoot()
+    {
+        var directory = Directory.GetCurrentDirectory();
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "card_replace.csproj")))
+            {
+                return directory;
+            }
+
+            directory = Directory.GetParent(directory)?.FullName ?? "";
+        }
+
+        throw new DirectoryNotFoundException("Could not find card_replace.csproj. Run the builder from the card_replace repository.");
     }
 }
 
-public sealed class BuildConfig
-{
-    [JsonPropertyName("godot_exe")]
-    public string GodotExe { get; set; } = "";
+public sealed record BuildOptions(
+    string ProjectRoot,
+    string GodotExe,
+    List<string> ResourcePackDirs,
+    string OutputRoot,
+    string OutputModDir,
+    string LoaderDllPath,
+    string ModManifestPath,
+    string StagingRoot,
+    string PckName);
 
-    [JsonPropertyName("output_root")]
-    public string OutputRoot { get; set; } = "build/generated";
-
-    [JsonPropertyName("output_mod_dir")]
-    public string OutputModDir { get; set; } = "dist/card_replace";
-
-    [JsonPropertyName("loader_dll_path")]
-    public string LoaderDllPath { get; set; } = ".godot/mono/temp/bin/Debug/card_replace.dll";
-
-    [JsonPropertyName("mod_manifest_path")]
-    public string ModManifestPath { get; set; } = "card_replace.json";
-
-    [JsonPropertyName("staging_root")]
-    public string StagingRoot { get; set; } = "build/staging_godot_project";
-
-    [JsonPropertyName("pck_name")]
-    public string PckName { get; set; } = "card_replace.pck";
-
-    [JsonPropertyName("inputs")]
-    public JsonElement Inputs { get; set; }
-
-    [JsonPropertyName("packs")]
-    public List<InputSource> Packs { get; set; } = [];
-}
-
-public sealed class InputSource
+public sealed class ResourceSource
 {
     [JsonPropertyName("path")]
     public string Path { get; set; } = "";
@@ -845,70 +905,68 @@ public sealed class InputSource
     public string Type { get; set; } = "";
 }
 
-public sealed record InputContext(
+public sealed record ResourceContext(
     string Id,
     string Path,
     int Priority,
     int Order,
     bool Enabled,
-    InputKind Kind)
+    ResourceKind Kind)
 {
-    public static InputContext Create(InputSource input, int order, string configRoot)
+    public static ResourceContext Create(ResourceSource source, int order)
     {
-        var path = System.IO.Path.GetFullPath(System.IO.Path.IsPathRooted(input.Path)
-            ? input.Path
-            : System.IO.Path.Combine(configRoot, input.Path));
+        var path = System.IO.Path.GetFullPath(source.Path);
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            throw new FileNotFoundException($"Input was not found: {path}");
+            throw new FileNotFoundException($"Resource source was not found: {path}");
         }
 
-        var kind = DetectKind(path, input.Type);
-        var id = string.IsNullOrWhiteSpace(input.Id)
+        var kind = DetectKind(path, source.Type);
+        var id = string.IsNullOrWhiteSpace(source.Id)
             ? DefaultId(path)
-            : input.Id.Trim();
+            : source.Id.Trim();
 
-        return new InputContext(id, path, input.Priority, order, input.Enabled, kind);
+        return new ResourceContext(id, path, source.Priority, order, source.Enabled, kind);
     }
 
-    private static InputKind DetectKind(string path, string type)
+    private static ResourceKind DetectKind(string path, string type)
     {
         if (!string.IsNullOrWhiteSpace(type))
         {
             return type.Trim().ToLowerInvariant() switch
             {
-                "cardartpack" or "cardartpack_json" or "cardartpackjson" => InputKind.CardArtPackJson,
-                "folder" or "mod_folder" or "modfolder" => InputKind.ModFolder,
-                "zip" => InputKind.Zip,
-                "pck" or "pck_file" or "pckfile" => InputKind.PckFile,
-                _ => throw new InvalidOperationException($"Unknown input type: {type}")
+                "cardartpack" or "cardartpack_json" or "cardartpackjson" => ResourceKind.CardArtPackJson,
+                "folder" or "mod_folder" or "modfolder" => ResourceKind.ModFolder,
+                "zip" => ResourceKind.Zip,
+                "pck" or "pck_file" or "pckfile" => ResourceKind.PckFile,
+                _ => throw new InvalidOperationException($"Unknown source type: {type}")
             };
         }
 
         if (Directory.Exists(path))
         {
-            return InputKind.ModFolder;
+            return ResourceKind.ModFolder;
         }
 
         var extension = System.IO.Path.GetExtension(path);
         if (extension.Equals(".cardartpack.json", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".cardartpack.json", StringComparison.OrdinalIgnoreCase))
         {
-            return InputKind.CardArtPackJson;
+            return ResourceKind.CardArtPackJson;
         }
 
         if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
         {
-            return InputKind.Zip;
+            return ResourceKind.Zip;
         }
 
         if (extension.Equals(".pck", StringComparison.OrdinalIgnoreCase))
         {
-            return InputKind.PckFile;
+            return ResourceKind.PckFile;
         }
 
-        throw new InvalidOperationException($"Could not infer input type: {path}");
+        throw new InvalidOperationException($"Could not infer source type: {path}");
     }
 
     private static string DefaultId(string path)
@@ -922,11 +980,11 @@ public sealed record InputContext(
             name = name[..^".cardartpack".Length];
         }
 
-        return string.IsNullOrWhiteSpace(name) ? "input" : name;
+        return string.IsNullOrWhiteSpace(name) ? "source" : name;
     }
 }
 
-public enum InputKind
+public enum ResourceKind
 {
     CardArtPackJson,
     ModFolder,
@@ -954,7 +1012,7 @@ public sealed record ReplacementCandidate(
     string ConflictKey,
     string SourcePath,
     string CardId,
-    InputContext Input,
+    ResourceContext Source,
     string Type,
     IReplacementAsset Asset);
 
@@ -1271,11 +1329,11 @@ public sealed record CandidateSummary(
             candidate.ConflictKey,
             candidate.SourcePath,
             candidate.CardId,
-            candidate.Input.Id,
-            candidate.Input.Path,
-            candidate.Input.Priority,
+            candidate.Source.Id,
+            candidate.Source.Path,
+            candidate.Source.Priority,
             candidate.Type,
-            candidate.Input.Kind.ToString());
+            candidate.Source.Kind.ToString());
     }
 }
 
@@ -1296,4 +1354,4 @@ public sealed record ConflictReport(
     [property: JsonPropertyName("conflict_count")] int ConflictCount,
     [property: JsonPropertyName("conflicts")] List<ConflictEntry> Conflicts);
 
-public sealed record BuildResult(string PckPath, int ReplacementCount);
+public sealed record BuildResult(string PckPath, string ModPath, int ReplacementCount);
