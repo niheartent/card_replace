@@ -1,0 +1,32 @@
+{
+  "godot_exe": "D:\\workspace\\slaythespire2\\mods\\Godot_v4.5.1-stable_mono_win64\\Godot_v4.5.1-stable_mono_win64_console.exe",
+  "output_root": "build\\generated",
+  "output_mod_dir": "dist\\card_replace",
+  "loader_dll_path": ".godot\\mono\\temp\\bin\\Debug\\card_replace.dll",
+  "mod_manifest_path": "card_replace.json",
+  "staging_root": "build\\staging_godot_project",
+  "pck_name": "card_replace.pck",
+  "inputs": [
+    {
+      "id": "pack_1",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\1-pack.cardartpack.json",
+      "enabled": true,
+      "priority": 99999,
+      "type": "cardartpack"
+    },
+    {
+      "id": "pack_2_zip",
+      "path": "D:\\workspace\\slaythespire2\\mods\\resources\\cardartpack\\pack1\\2-existing-card-art-mod.zip",
+      "enabled": true,
+      "priority": 99998,
+      "type": "zip"
+    },
+    {
+      "id": "pack_3_folder",
+      "path": "D:\\steam\\steamapps\\common\\Slay the Spire 2\\mods\\some_existing_card_art_mod",
+      "enabled": true,
+      "priority": 99997,
+      "type": "folder"
+    }
+  ]
+}

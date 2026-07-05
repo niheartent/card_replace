@@ -1,0 +1,17 @@
+{
+  "id": "card_replace",
+  "name": "Card Replace",
+  "author": "nihe",
+  "description": "Loads a generated high-performance card art PCK built from card art packs and compatible unencrypted PCK mods.",
+  "version": "0.1.2",
+  "min_game_version": "0.107.1",
+  "has_pck": true,
+  "has_dll": true,
+  "dependencies": [
+    {
+      "id": "STS2-RitsuLib",
+      "min_version": "0.4.51"
+    }
+  ],
+  "affects_gameplay": false
+}
